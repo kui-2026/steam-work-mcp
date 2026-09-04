@@ -45,7 +45,14 @@ try {
 
   $envFile = Join-Path $projectFullPath '.env'
   if (-not (Test-Path -LiteralPath $envFile -PathType Leaf)) {
-    $secret = -join ((1..64) | ForEach-Object { '{0:x}' -f (Get-Random -Maximum 16) })
+    $randomBytes = New-Object byte[] 32
+    $randomGenerator = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try {
+      $randomGenerator.GetBytes($randomBytes)
+    } finally {
+      $randomGenerator.Dispose()
+    }
+    $secret = [BitConverter]::ToString($randomBytes).Replace('-', '').ToLowerInvariant()
     @(
       'STEAM_API_KEY='
       'STEAM_USER='
