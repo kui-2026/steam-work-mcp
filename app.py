@@ -1,4 +1,4 @@
-"""Run steam-mcp as a stateless Streamable HTTP service for ChatGPT Work."""
+"""Run steam-mcp as a session-aware Streamable HTTP service for ChatGPT."""
 
 from __future__ import annotations
 
@@ -49,7 +49,10 @@ def main() -> None:
         host=os.getenv("MCP_HOST", "127.0.0.1"),
         port=_port(),
         streamable_http_path=_path(),
-        stateless_http=True,
+        # The OpenAI tunnel client keeps an MCP session between initialize and
+        # subsequent requests. Stateless mode drops that session and makes
+        # the tunnel's readiness probe fail with "session not found".
+        stateless_http=False,
         json_response=True,
         max_request_body_size=1_048_576,
     )
