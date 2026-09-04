@@ -4,13 +4,9 @@ param([string]$ProjectPath = 'C:\steam-work-mcp')
 $ErrorActionPreference = 'Stop'
 $projectFullPath = [IO.Path]::GetFullPath($ProjectPath).TrimEnd('\')
 $envFile = Join-Path $projectFullPath '.env'
-$tunnelExe = 'C:\tunnel-client\tunnel-client.exe'
 
 if (-not (Test-Path -LiteralPath $envFile -PathType Leaf)) {
   throw "Configuration file not found: $envFile"
-}
-if (-not (Test-Path -LiteralPath $tunnelExe -PathType Leaf)) {
-  throw "Tunnel client not found: $tunnelExe"
 }
 
 $keySecure = Read-Host 'Paste your Steam Web API key here (it stays on the VPS)' -AsSecureString
@@ -39,25 +35,10 @@ $lines | Set-Content -LiteralPath $envFile -Encoding UTF8
 $apiKey = $null
 $keySecure = $null
 
-# Restart the HTTP service if it is currently used.
-$listener = Get-NetTCPConnection -LocalPort 4100 -State Listen -ErrorAction SilentlyContinue
-foreach ($item in @($listener)) {
-  $proc = Get-Process -Id $item.OwningProcess -ErrorAction SilentlyContinue
-  if ($proc -and $proc.ProcessName -in @('python', 'pythonw')) {
-    Stop-Process -Id $proc.Id -Force
-  }
+$repairScript = Join-Path $projectFullPath 'scripts\repair-steam-channel.ps1'
+if (-not (Test-Path -LiteralPath $repairScript -PathType Leaf)) {
+  throw "Steam channel repair script not found: $repairScript"
 }
 
-# Restart only the Steam tunnel so its child process reloads .env.
-Get-CimInstance Win32_Process -Filter "Name='tunnel-client.exe'" |
-  Where-Object { $_.CommandLine -match 'run\s+--profile\s+steam' } |
-  ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
-
-Start-Process `
-  -FilePath $tunnelExe `
-  -ArgumentList @('run', '--profile', 'steam') `
-  -WindowStyle Hidden `
-  -RedirectStandardOutput 'C:\tunnel-client\steam-tunnel.log' `
-  -RedirectStandardError 'C:\tunnel-client\steam-tunnel-error.log'
-
-Write-Host 'Steam account access was saved locally and the Steam tunnel was restarted.' -ForegroundColor Green
+& $repairScript -ProjectPath $projectFullPath -Profile steam -HealthPort 18083
+Write-Host 'Steam account access was saved locally and the Steam channel is ready.' -ForegroundColor Green
