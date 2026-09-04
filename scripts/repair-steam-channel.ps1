@@ -11,6 +11,7 @@ $projectFullPath = [IO.Path]::GetFullPath($ProjectPath).TrimEnd('\')
 $tunnelDir = 'C:\tunnel-client'
 $tunnelExe = Join-Path $tunnelDir 'tunnel-client.exe'
 $profileFile = Join-Path ([Environment]::GetFolderPath('ApplicationData')) "tunnel-client\$Profile.yaml"
+$runnerScript = Join-Path $projectFullPath 'scripts\run-steam-tunnel.ps1'
 $readyUrl = "http://127.0.0.1:$HealthPort/readyz"
 
 if (-not (Test-Path -LiteralPath $tunnelExe -PathType Leaf)) {
@@ -21,6 +22,9 @@ if (-not (Test-Path -LiteralPath $profileFile -PathType Leaf)) {
 }
 if (-not (Test-Path -LiteralPath (Join-Path $projectFullPath '.env') -PathType Leaf)) {
   throw "Steam MCP configuration not found: $projectFullPath\.env"
+}
+if (-not (Test-Path -LiteralPath $runnerScript -PathType Leaf)) {
+  throw "Steam tunnel runner not found: $runnerScript"
 }
 
 # Scheduled tasks do not inherit variables that only exist in an open shell.
@@ -50,11 +54,11 @@ Get-CimInstance Win32_Process -Filter "Name='tunnel-client.exe'" |
 
 Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 
-$arguments = "run --profile $Profile --health.listen-addr 127.0.0.1:$HealthPort"
+$arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$runnerScript`" -Profile $Profile -HealthPort $HealthPort"
 $action = New-ScheduledTaskAction `
-  -Execute $tunnelExe `
+  -Execute 'powershell.exe' `
   -Argument $arguments `
-  -WorkingDirectory $tunnelDir
+  -WorkingDirectory $projectFullPath
 $trigger = New-ScheduledTaskTrigger -AtLogOn
 $settings = New-ScheduledTaskSettingsSet `
   -StartWhenAvailable `
@@ -78,9 +82,14 @@ for ($attempt = 0; $attempt -lt 30; $attempt += 1) {
   try {
     $response = Invoke-WebRequest -Uri $readyUrl -UseBasicParsing -TimeoutSec 3
     if ($response.StatusCode -eq 200) {
-      Write-Host 'Steam MCP channel is ready.' -ForegroundColor Green
-      Write-Host "Ready check: $readyUrl -> 200"
-      exit 0
+      Start-Sleep -Seconds 5
+      $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+      $secondResponse = Invoke-WebRequest -Uri $readyUrl -UseBasicParsing -TimeoutSec 3
+      if ($task.State -eq 'Running' -and $secondResponse.StatusCode -eq 200) {
+        Write-Host 'Steam MCP channel is ready and persistent.' -ForegroundColor Green
+        Write-Host "Ready check: $readyUrl -> 200; TaskState=Running"
+        exit 0
+      }
     }
   } catch {
     $lastError = $_.Exception.Message
@@ -91,4 +100,10 @@ $taskInfo = Get-ScheduledTaskInfo -TaskName $TaskName -ErrorAction SilentlyConti
 $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 $state = if ($task) { $task.State } else { 'missing' }
 $lastResult = if ($taskInfo) { $taskInfo.LastTaskResult } else { 'unknown' }
-throw "Steam tunnel did not become ready. TaskState=$state; LastTaskResult=$lastResult; ReadyError=$lastError"
+$errorLog = 'C:\tunnel-client\steam-tunnel-error.log'
+$logTail = if (Test-Path -LiteralPath $errorLog) {
+  (Get-Content -LiteralPath $errorLog -Tail 12 -ErrorAction SilentlyContinue) -join [Environment]::NewLine
+} else {
+  'No Steam tunnel error log was created.'
+}
+throw "Steam tunnel did not remain ready. TaskState=$state; LastTaskResult=$lastResult; ReadyError=$lastError`n$logTail"
